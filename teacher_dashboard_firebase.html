@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Панель Учителя (Firebase)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+        .session-card, .student-item { transition: all 0.3s ease; }
+        #session-detail-view { display: none; }
+        #dashboard-view { display: block; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto p-4 md:p-8">
+        <!-- Dashboard View -->
+        <div id="dashboard-view">
+            <div class="bg-white rounded-2xl shadow-xl p-6 md:p-8">
+                <header class="flex justify-between items-center pb-4 border-b">
+                    <h1 class="text-2xl md:text-3xl font-bold text-indigo-600">Панель Управления Уроками</h1>
+                    <button id="create-session-btn" class="bg-blue-600 text-white font-bold py-2 px-5 rounded-lg hover:bg-blue-700 transition-transform transform hover:scale-105">
+                        + Создать сессию
+                    </button>
+                </header>
+                <section id="sessions-list-section" class="mt-6">
+                    <h2 class="text-xl font-bold mb-4">Активные сессии</h2>
+                    <div id="sessions-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <p id="no-sessions-message">Активных сессий нет. Нажмите "Создать сессию", чтобы начать.</p>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- Session Detail View -->
+        <div id="session-detail-view">
+            <div class="bg-white rounded-2xl shadow-xl p-6 md:p-8">
+                <header class="pb-4 border-b">
+                     <button id="back-to-dashboard-btn" class="mb-4 text-sm text-indigo-600 hover:underline">&larr; Вернуться к списку сессий</button>
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center">
+                        <div>
+                            <h1 id="detail-session-name" class="text-2xl md:text-3xl font-bold text-indigo-600"></h1>
+                             <div class="mt-2 p-2 bg-indigo-50 border rounded-lg inline-block">
+                                <span class="font-medium">ID для учеников:</span>
+                                <strong id="detail-session-id" class="text-indigo-700 text-lg ml-2 select-all"></strong>
+                            </div>
+                        </div>
+                    </div>
+                </header>
+                <main class="mt-6 flex flex-col md:flex-row gap-8">
+                    <div class="w-full md:w-1/3">
+                        <h3 class="text-lg font-bold mb-3">Управление</h3>
+                        <div class="space-y-3">
+                            <button id="permit-test-btn" class="w-full bg-green-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-green-700">Разрешить тест</button>
+                            <button id="delete-session-btn" class="w-full bg-red-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-red-700">Удалить сессию</button>
+                        </div>
+                    </div>
+                    <div class="w-full md:w-2/3">
+                        <h3 class="text-lg font-bold mb-3">Список учеников</h3>
+                        <div class="bg-gray-50 rounded-lg p-4 min-h-[100px]">
+                            <ul id="student-list" class="space-y-3">
+                                <li id="no-students-message">Ожидание подключения учеников...</li>
+                            </ul>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+    </div>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, deleteDoc, query, getDocs, where, writeBatch } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // --- PASTE YOUR FIREBASE CONFIG OBJECT HERE ---
+        // const firebaseConfig = { ... };
+        // --- END OF FIREBASE CONFIG ---
+
+        if (typeof firebaseConfig === 'undefined') {
+            alert('Firebase config object is not found. Please follow the setup instructions.');
+            return;
+        }
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // --- DOM Elements ---
+        const dashboardView = document.getElementById('dashboard-view');
+        const sessionDetailView = document.getElementById('session-detail-view');
+        const createSessionBtn = document.getElementById('create-session-btn');
+        const sessionsList = document.getElementById('sessions-list');
+        const noSessionsMessage = document.getElementById('no-sessions-message');
+        
+        const backToDashboardBtn = document.getElementById('back-to-dashboard-btn');
+        const detailSessionName = document.getElementById('detail-session-name');
+        const detailSessionId = document.getElementById('detail-session-id');
+        const permitTestBtn = document.getElementById('permit-test-btn');
+        const deleteSessionBtn = document.getElementById('delete-session-btn');
+        const studentList = document.getElementById('student-list');
+        const noStudentsMessageDetail = document.getElementById('no-students-message');
+
+        // --- State ---
+        let currentSessionId = null;
+        let sessionsUnsubscribe = null;
+        let studentsUnsubscribe = null;
+
+        // --- Functions ---
+        function showView(view) {
+            dashboardView.style.display = 'none';
+            sessionDetailView.style.display = 'none';
+            view.style.display = 'block';
+        }
+
+        function renderDashboard(sessions) {
+            sessionsList.innerHTML = '';
+            if (Object.keys(sessions).length === 0) {
+                sessionsList.appendChild(noSessionsMessage);
+                return;
+            }
+            
+            Object.entries(sessions).forEach(([id, sessionData]) => {
+                const card = document.createElement('div');
+                card.className = 'session-card bg-white p-4 rounded-lg shadow-md border cursor-pointer hover:shadow-lg hover:border-indigo-500';
+                card.dataset.sessionId = id;
+                card.innerHTML = `
+                    <h3 class="font-bold text-lg">${sessionData.lessonName}</h3>
+                    <p class="text-sm text-gray-500">Студентов: ${sessionData.studentCount || 0}</p>
+                    <p class="text-xs text-gray-400 mt-2">ID: ${id}</p>
+                `;
+                card.addEventListener('click', () => openSessionDetail(id, sessionData.lessonName));
+                sessionsList.appendChild(card);
+            });
+        }
+        
+        function renderStudentList(students) {
+            studentList.innerHTML = '';
+             if (Object.keys(students).length === 0) {
+                studentList.appendChild(noStudentsMessageDetail);
+                return;
+            }
+            Object.entries(students).forEach(([name, data]) => {
+                const li = document.createElement('li');
+                li.className = 'student-item flex justify-between items-center bg-white p-3 rounded-lg shadow-sm border';
+                const scoreText = data.score !== null ? `${data.score}/100` : 'Ожидает...';
+                const scoreColor = data.score !== null ? (data.score >= 75 ? 'text-green-600' : 'text-red-600') : 'text-gray-500';
+                li.innerHTML = `<span class="font-medium">${name}</span><span class="font-bold ${scoreColor}">${scoreText}</span>`;
+                studentList.appendChild(li);
+            });
+        }
+        
+        async function openSessionDetail(sessionId, lessonName) {
+            currentSessionId = sessionId;
+            detailSessionName.textContent = lessonName;
+            detailSessionId.textContent = sessionId;
+
+            if (studentsUnsubscribe) studentsUnsubscribe();
+            
+            const studentsColRef = collection(db, "lessons", sessionId, "students");
+            studentsUnsubscribe = onSnapshot(studentsColRef, (snapshot) => {
+                const students = {};
+                snapshot.forEach(doc => students[doc.id] = doc.data());
+                renderStudentList(students);
+            });
+            showView(sessionDetailView);
+        }
+
+        // --- Event Listeners ---
+        createSessionBtn.addEventListener('click', async () => {
+            const lessonName = prompt("Введите название урока (например, '7А - Антивирусы'):");
+            if (!lessonName || lessonName.trim() === '') return;
+
+            const sessionId = Math.random().toString(36).substring(2, 8).toUpperCase();
+            const sessionDocRef = doc(db, "lessons", sessionId);
+            await setDoc(sessionDocRef, {
+                lessonName: lessonName.trim(),
+                createdAt: new Date(),
+                testPermitted: false
+            });
+        });
+        
+        backToDashboardBtn.addEventListener('click', () => {
+            if (studentsUnsubscribe) studentsUnsubscribe();
+            currentSessionId = null;
+            showView(dashboardView);
+        });
+
+        permitTestBtn.addEventListener('click', async () => {
+            if (!currentSessionId) return;
+            const sessionDocRef = doc(db, "lessons", currentSessionId);
+            await updateDoc(sessionDocRef, { testPermitted: true });
+            alert('Разрешение на прохождение теста отправлено ученикам этой сессии.');
+        });
+        
+        deleteSessionBtn.addEventListener('click', async () => {
+            if (!currentSessionId || !confirm('Вы уверены? Это действие удалит сессию и все результаты учеников.')) return;
+            
+            const batch = writeBatch(db);
+            const studentsColRef = collection(db, "lessons", currentSessionId, "students");
+            const studentsSnapshot = await getDocs(studentsColRef);
+            studentsSnapshot.forEach(doc => batch.delete(doc.ref));
+            
+            const sessionDocRef = doc(db, "lessons", currentSessionId);
+            batch.delete(sessionDocRef);
+            
+            await batch.commit();
+            
+            backToDashboardBtn.click();
+        });
+
+        // --- Initial Load ---
+        async function initializeDashboard() {
+            try {
+                await signInAnonymously(auth);
+                
+                if (sessionsUnsubscribe) sessionsUnsubscribe();
+                const sessionsColRef = collection(db, "lessons");
+                sessionsUnsubscribe = onSnapshot(sessionsColRef, async (snapshot) => {
+                    let sessions = {};
+                    for (const sessionDoc of snapshot.docs) {
+                        const studentsColRef = collection(db, "lessons", sessionDoc.id, "students");
+                        const studentsSnapshot = await getDocs(studentsColRef);
+                        sessions[sessionDoc.id] = {
+                            ...sessionDoc.data(),
+                            studentCount: studentsSnapshot.size
+                        };
+                    }
+                    renderDashboard(sessions);
+                });
+
+            } catch (error) {
+                console.error("Initialization failed:", error);
+                alert("Не удалось подключиться к Firebase. Проверьте конфигурацию и правила безопасности.");
+            }
+        }
+
+        initializeDashboard();
+    </script>
+</body>
+</html>
