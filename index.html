@@ -320,7 +320,11 @@
 
             } catch (error) {
                 console.error("Initialization failed:", error);
-                alert("Не удалось подключиться к Firebase. Проверьте конфигурацию и правила безопасности.");
+                if (error.code && error.code.includes('auth')) {
+                    alert("Ошибка аутентификации Firebase. Убедитесь, что 'Анонимный вход' включен в настройках Authentication в консоли Firebase.");
+                } else {
+                    alert("Не удалось подключиться к Firebase. Проверьте конфигурацию и правильно ли опубликованы правила безопасности.");
+                }
             }
         }
 
