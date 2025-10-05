@@ -108,9 +108,8 @@
         };
         // --- END OF FIREBASE CONFIG ---
 
-        if (!firebaseConfig || !firebaseConfig.projectId) {
-            alert('Firebase config object is not found. Please follow the setup instructions.');
-            return;
+        if (!firebaseConfig || !firebaseConfig.projectId || firebaseConfig.projectId === "...") {
+            alert('Firebase config object is not found or is a placeholder. Please follow the setup instructions.');
         }
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
